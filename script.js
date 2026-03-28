@@ -10,6 +10,7 @@
 // ─── CONSTANTS ────────────────────────────────────────────────────
 const MAX_P3_P4_TOTAL = 2;
 const MAX_M_PER_WEEK  = 2;   // maks M per orang per minggu
+const MAX_M_PER_MONTH = 4;   // maks M per orang per bulan (3–4, pakai 4)
 
 // Target M per hari (FIXED: 5 total)
 const M_QUOTA = { "Tier 2": 2, "Tier 1 Email": 1, "Tier 1 Inbound": 2 };
@@ -244,6 +245,33 @@ function renderRequestTables() {
 // ═══════════════════════════════════════════════════════════════════
 
 /**
+ * Hitung jumlah shift M yang sudah dimiliki seorang karyawan
+ * di seluruh minggu dalam bulan yang sama dengan weekKey (tidak termasuk weekKey itu sendiri).
+ * Digunakan untuk menjaga batas MAX_M_PER_MONTH.
+ */
+function getMonthlyMCount(nama, weekKey) {
+    const refDate = parseKey(weekKey);
+    const refYear = refDate.getFullYear();
+    const refMonth = refDate.getMonth();
+    let count = 0;
+    Object.entries(schedulesByWeek).forEach(([wk, weekly]) => {
+        if (wk === weekKey) return;  // Minggu aktif dihitung real-time dari mCount
+        const wDate = parseKey(wk);
+        // Hitung minggu yang tumpang tindih dengan bulan refMonth
+        const wEnd = new Date(wDate.getFullYear(), wDate.getMonth(), wDate.getDate() + 6);
+        const inMonth = (
+            (wDate.getFullYear() === refYear && wDate.getMonth() === refMonth) ||
+            (wEnd.getFullYear() === refYear  && wEnd.getMonth()  === refMonth)
+        );
+        if (!inMonth) return;
+        const emp = weekly.find(e => e.nama === nama);
+        if (!emp) return;
+        count += emp.shifts.filter(s => s === "M").length;
+    });
+    return count;
+}
+
+/**
  * Pre-pilih siapa yang dapat shift M hari ini.
  * Target: 2 Tier 2 + 1 T1 Email + 2 T1 Inbound = 5 total.
  * Prioritas: cover semua 4 site terlebih dahulu.
@@ -284,8 +312,15 @@ function selectMWorkersForDay(weekly, day, weekKey, lockedMap) {
                 if (k.gender !== "Pria") return false;
                 if (k.level !== tier) return false;
                 const prev = day===0 ? getPrevWeekLastShift(weekKey,k.nama) : weekly[idx].shifts[day-1];
-                if (prev === "M") return false;           // Wajib OFF setelah M
+                // M→M diizinkan — tidak perlu filter prev==="M"
                 if (k.mCount >= MAX_M_PER_WEEK) return false;
+                // Cek batas bulanan: mCount minggu ini + bulan lain tidak boleh > MAX_M_PER_MONTH
+                if (k.mCount + k._monthlyM >= MAX_M_PER_MONTH) return false;
+                // Jika besok ter-lock ke shift non-OFF & non-M, tidak bisa assign M hari ini
+                if (day < 6) {
+                    const nextLocked = lockedMap[k.nama] && lockedMap[k.nama][day + 1];
+                    if (nextLocked && nextLocked !== "OFF" && nextLocked !== "C" && nextLocked !== "M") return false;
+                }
                 return true;
             });
         return shuffle(pool);   // ← SHUFFLE sebelum dikembalikan
@@ -343,7 +378,11 @@ function generateShift(weekKey) {
     const lockedMap  = buildLockedMapForWeek(weekKey);
 
     let weekly = karyawanData.map(k => ({
-        ...k, shifts: Array(7).fill(""), offCount:0, mCount:0
+        ...k,
+        shifts:    Array(7).fill(""),
+        offCount:  0,
+        mCount:    0,                               // M count minggu ini (real-time)
+        _monthlyM: getMonthlyMCount(k.nama, weekKey) // M dari minggu lain di bulan ini
     }));
 
     for (let day = 0; day < 7; day++) {
@@ -382,14 +421,13 @@ function generateShift(weekKey) {
                 if (locked==="OFF"||locked==="C") k.offCount++;
                 return;
             }
-            // b. Anti-Jumping: setelah M → wajib OFF
+            // b. Anti-Jumping: setelah M → wajib OFF kecuali sudah dapat M lagi (handled di pre-assign)
+            //    Jika sampai sini berarti orang ini tidak dapat M hari ini → paksa OFF
             if (prev === "M") {
                 k.shifts[day] = "OFF";
                 k.offCount++;
                 return;
             }
-            // c. Anti-Jumping: setelah S → tidak ke P
-            const avoidP = (prev === "S");
 
             // d. Probabilitas OFF natural
             if (k.offCount < TARGET_OFF) {
@@ -398,11 +436,19 @@ function generateShift(weekKey) {
                 }
             }
 
-            // e. Pilih dari pool berbobot (tanpa M)
-            const pool = buildPool(weights, k.gender, avoidP, p3p4Daily);
-            const sel  = pool.length ? pool[Math.floor(Math.random()*pool.length)]
-                                     : (k.gender==="Wanita" ? "P2" : "S");
-            if (sel==="P3"||sel==="P4") p3p4Daily++;
+            // e. Pilih dari pool berbobot — isJumping memfilter semua pelanggaran
+            const pool = buildPool(weights, k.gender, prev, p3p4Daily);
+
+            // Fallback bertingkat: cari shift valid yang paling longgar
+            let sel;
+            if (pool.length) {
+                sel = pool[Math.floor(Math.random() * pool.length)];
+            } else {
+                // Tidak ada shift valid → paksa OFF
+                sel = "OFF";
+            }
+            if (sel === "P3" || sel === "P4") p3p4Daily++;
+            if (sel === "OFF") k.offCount++;
             k.shifts[day] = sel;
         });
     }
@@ -424,16 +470,41 @@ function generateShift(weekKey) {
 }
 
 /**
- * Build pool shift berbobot (M selalu dikecualikan).
+ * Cek apakah transisi prevShift → nextShift melanggar aturan anti-jumping.
+ * Hierarki: M(22) > S(14) > P4(12) > P3(10) > P2(08) > P1(06)
+ *   Setelah M  → hanya OFF / C boleh
+ *   Setelah S  → tidak boleh P1, P2, P3, P4
+ *   Setelah P4 → tidak boleh P1, P2, P3
+ *   Setelah P3 → tidak boleh P1, P2
+ *   Setelah P2 → tidak boleh P1
  */
-function buildPool(weights, gender, avoidP, p3p4Daily) {
+function isJumping(prev, next) {
+    if (!prev || prev === "OFF" || prev === "C" || prev === "") return false;
+    const forbidden = {
+        // Setelah M → hanya M / OFF / Cuti boleh (M→M dihandle pre-assign)
+        "M":  ["P1","P2","P3","P4","S"],
+        // Setelah S → tidak boleh shift P apapun
+        "S":  ["P1","P2","P3","P4"],
+        // Setelah P4 → tidak boleh P3, P2, P1
+        "P4": ["P1","P2","P3"],
+        // P3 boleh ke P1/P2 → tidak ada forbidden
+        // P2 boleh ke P1   → tidak ada forbidden
+    };
+    return (forbidden[prev] || []).includes(next);
+}
+
+/**
+ * Build pool shift berbobot (M selalu dikecualikan).
+ * Menggunakan isJumping untuk memfilter semua pelanggaran anti-jumping.
+ */
+function buildPool(weights, gender, prevShift, p3p4Daily) {
     const pool = [];
     Object.entries(weights).forEach(([s, w]) => {
         if (!w || s === "M") return;
-        if (gender==="Wanita" && (s==="P4"||s==="S")) return;
-        if (avoidP && s.startsWith("P")) return;
-        if (p3p4Daily >= MAX_P3_P4_TOTAL && (s==="P3"||s==="P4")) return;
-        for (let i=0; i<w; i++) pool.push(s);
+        if (gender === "Wanita" && (s === "P4" || s === "S")) return;
+        if (isJumping(prevShift, s)) return;
+        if (p3p4Daily >= MAX_P3_P4_TOTAL && (s === "P3" || s === "P4")) return;
+        for (let i = 0; i < w; i++) pool.push(s);
     });
     return pool;
 }
@@ -449,15 +520,28 @@ function ensureOffContinuity(weekly, targetOff, weekKey, lockedMap) {
         k.offCount = k.shifts.filter(s => s==="OFF"||s==="C").length;
         const emp  = lockedMap[k.nama] || {};
 
-        // Terlalu banyak OFF → ubah ke P2
+        // Terlalu banyak OFF → ubah ke shift valid (respek anti-jumping)
         while (k.offCount > targetOff) {
             let changed = false;
-            for (let i=0; i<7; i++) {
+            for (let i = 0; i < 7; i++) {
                 if (k.shifts[i] !== "OFF") continue;
-                if (emp[i] !== undefined)  continue;   // Locked → skip
-                const prev = i===0 ? getPrevWeekLastShift(weekKey,k.nama) : k.shifts[i-1];
-                if (prev === "M")          continue;   // Wajib post-M → skip
-                k.shifts[i] = "P2"; k.offCount--; changed = true; break;
+                if (emp[i] !== undefined)  continue;                 // Locked → skip
+                const prev = i === 0 ? getPrevWeekLastShift(weekKey, k.nama) : k.shifts[i-1];
+                if (prev === "M")          continue;                 // Wajib post-M → skip
+                // Cari shift pengganti yang tidak melanggar anti-jumping ke prev & next
+                const next = k.shifts[i + 1] || null;
+                // Kandidat pengganti: P2 atau S (bobot tinggi), asal tidak jumping
+                const candidates = ["P2","S","P1","P3","P4"].filter(s => {
+                    if (isJumping(prev, s)) return false;
+                    if (k.gender === "Wanita" && (s === "P4" || s === "S")) return false;
+                    if (next && isJumping(s, next)) return false;    // Jaga hari berikutnya
+                    return true;
+                });
+                if (!candidates.length) continue;
+                k.shifts[i] = candidates[0];
+                k.offCount--;
+                changed = true;
+                break;
             }
             if (!changed) break;
         }
@@ -466,9 +550,13 @@ function ensureOffContinuity(weekly, targetOff, weekKey, lockedMap) {
         while (k.offCount < targetOff) {
             const cands = [];
             k.shifts.forEach((s, i) => {
-                if (emp[i]!==undefined)            return;
-                if (s==="OFF"||s==="M"||s==="C")   return;
-                if (k.shifts[i+1]==="OFF")          return;  // Hindari double OFF berurutan
+                if (emp[i] !== undefined)            return;   // Locked → skip
+                if (s === "OFF" || s === "M" || s === "C") return;
+                if (k.shifts[i+1] === "OFF")         return;   // Hindari double OFF berurutan
+                // Setelah OFF, hari berikutnya boleh shift apapun (OFF tidak trigger jumping)
+                // Namun pastikan hari ini bukan setelah M (tidak mungkin, M sudah dapat OFF di step atas)
+                const prev = i === 0 ? getPrevWeekLastShift(weekKey, k.nama) : k.shifts[i-1];
+                if (prev === "M") return;                       // Hari wajib OFF post-M, skip
                 cands.push(i);
             });
             if (!cands.length) break;
