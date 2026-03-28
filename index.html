@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistem Penjadwalan Shift & Request</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="bg-slate-100 min-h-screen p-4 md:p-8 font-sans">
+
+    <div class="max-w-7xl mx-auto space-y-6">
+
+        <!-- Header -->
+        <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+            <div>
+                <h1 class="text-2xl font-bold text-slate-800">Manajemen Shift Karyawan</h1>
+                <p class="text-slate-500 text-sm">Data tersimpan otomatis di browser ini.</p>
+            </div>
+            <div class="flex flex-wrap gap-2">
+                <button id="btn-refresh-ui" class="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2 rounded-lg font-bold shadow-sm transition-all text-sm">
+                    🔄 Refresh Tabel
+                </button>
+                <button id="btn-generate" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold shadow-sm transition-all text-sm">
+                    🎲 Generate Baru
+                </button>
+                <button id="btn-reset" class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg font-bold shadow-sm transition-all text-sm">
+                    ⚠️ Reset
+                </button>
+            </div>
+        </div>
+
+        <!-- Week Selector -->
+        <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+            <div class="flex flex-wrap gap-4 items-end">
+                <div>
+                    <label class="block text-xs font-bold text-slate-500 uppercase mb-1">📅 Bulan & Tahun</label>
+                    <input type="month" id="month-picker" value="2026-02"
+                           class="border border-slate-300 p-2 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-white">
+                </div>
+                <div class="flex-1 min-w-[280px]">
+                    <label class="block text-xs font-bold text-slate-500 uppercase mb-1">🗓️ Pilih Minggu</label>
+                    <select id="week-select"
+                            class="w-full border border-slate-300 p-2 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-white font-medium text-slate-700">
+                    </select>
+                </div>
+                <p class="text-xs text-slate-400 pb-2">Jadwal tersimpan per-minggu. Ganti bulan untuk mengakses minggu lain.</p>
+            </div>
+        </div>
+
+        <!-- Tabel Jadwal -->
+        <div class="bg-white rounded-xl shadow-md border border-slate-200 overflow-hidden">
+            <div class="overflow-x-auto">
+                <table class="w-full border-collapse text-center">
+                    <thead id="table-header" class="text-white text-xs uppercase tracking-wider"></thead>
+                    <tbody id="schedule-body" class="text-slate-700"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Rekap Duty (diisi oleh JS) -->
+        <div id="duty-summary"></div>
+
+        <!-- Request & History -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+
+            <!-- Form Request -->
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
+                <div class="flex items-center gap-2 border-b pb-3">
+                    <span class="text-xl">📝</span>
+                    <h2 class="font-bold text-slate-800">Request Shift</h2>
+                </div>
+                <div class="space-y-3">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-500 uppercase mb-1">Nama Karyawan</label>
+                        <select id="req-nama" class="w-full border-slate-300 border p-2 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"></select>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs font-bold text-slate-500 uppercase mb-1">Tanggal</label>
+                            <input type="date" id="req-tgl" class="w-full border-slate-300 border p-2 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-slate-500 uppercase mb-1">Shift</label>
+                            <select id="req-shift" class="w-full border-slate-300 border p-2 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none">
+                                <option value="P1">P1 (06:00)</option>
+                                <option value="P2">P2 (08:00)</option>
+                                <option value="P3">P3 (10:00)</option>
+                                <option value="P4">P4 (12:00)</option>
+                                <option value="S">S (14:00)</option>
+                                <option value="M">M (22:00)</option>
+                                <option value="OFF">OFF</option>
+                                <option value="C">Cuti</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-500 uppercase mb-1">Alasan</label>
+                        <textarea id="req-alasan" placeholder="Contoh: Urusan Keluarga"
+                                  class="w-full border-slate-300 border p-2 rounded-lg text-sm h-24 focus:ring-2 focus:ring-blue-500 outline-none resize-none"></textarea>
+                    </div>
+                    <button id="btn-submit-req" class="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-3 rounded-lg transition-colors">
+                        Kirim Request
+                    </button>
+                </div>
+            </div>
+
+            <!-- Tabel Request -->
+            <div class="lg:col-span-2 space-y-6">
+
+                <!-- Pending -->
+                <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                    <div class="p-4 border-b bg-slate-50 flex justify-between items-center">
+                        <h2 class="font-bold text-slate-800 flex items-center gap-2">
+                            <span class="w-2 h-2 bg-orange-500 rounded-full animate-pulse"></span>
+                            Pending Requests
+                        </h2>
+                    </div>
+                    <div class="overflow-x-auto max-h-[300px]">
+                        <table class="w-full text-xs text-left">
+                            <thead class="bg-slate-100 text-slate-600 sticky top-0">
+                                <tr>
+                                    <th class="p-3">Nama</th>
+                                    <th class="p-3">Tgl</th>
+                                    <th class="p-3">Shift</th>
+                                    <th class="p-3">Alasan</th>
+                                    <th class="p-3 text-center">Aksi</th>
+                                </tr>
+                            </thead>
+                            <tbody id="pending-req-body" class="divide-y"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- History -->
+                <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                    <div class="p-4 border-b bg-slate-50">
+                        <h2 class="font-bold text-slate-800 flex items-center gap-2 text-sm text-slate-500">
+                            📜 Request History
+                        </h2>
+                    </div>
+                    <div class="overflow-x-auto max-h-[200px]">
+                        <table class="w-full text-[11px] text-left">
+                            <thead class="bg-slate-50 text-slate-400">
+                                <tr>
+                                    <th class="p-2">Nama</th>
+                                    <th class="p-2">Tgl</th>
+                                    <th class="p-2">Shift</th>
+                                    <th class="p-2">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="history-req-body" class="divide-y text-slate-400"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- MOTD Generator -->
+        <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 space-y-4">
+            <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b pb-4">
+                <h2 class="text-xl font-bold text-slate-800 flex items-center gap-2">
+                    <span>📢</span> MOTD Generator
+                </h2>
+                <div class="flex items-center gap-2">
+                    <label class="text-sm font-bold text-slate-500">Pilih Tanggal:</label>
+                    <select id="motd-date" class="border p-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500"></select>
+                </div>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div class="space-y-2">
+                    <label class="font-bold text-sm text-blue-600">Shift Pagi</label>
+                    <textarea id="motd-pagi-text"
+                              class="w-full border border-slate-200 p-3 rounded-lg text-[12px] h-64 bg-slate-50 font-mono focus:bg-white transition-colors outline-none"></textarea>
+                </div>
+                <div class="space-y-2">
+                    <label class="font-bold text-sm text-orange-600">Shift Sore</label>
+                    <textarea id="motd-sore-text"
+                              class="w-full border border-slate-200 p-3 rounded-lg text-[12px] h-64 bg-slate-50 font-mono focus:bg-white transition-colors outline-none"></textarea>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

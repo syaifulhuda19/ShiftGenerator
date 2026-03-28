@@ -1,0 +1,43 @@
+/* Warna Level / Tier */
+.bg-t2  { background-color: #FCD34D; }  /* Kuning  – Tier 2        */
+.bg-t1e { background-color: #FCA5A5; }  /* Salmon  – Tier 1 Email  */
+.bg-t1i { background-color: #A78BFA; }  /* Violet  – Tier 1 Inbound*/
+
+/* Warna Shift */
+.shift-P1  { background-color: #FFFFFF; color: #000; }
+.shift-P2  { background-color: #FBCFE8; color: #000; }
+.shift-P3  { background-color: #FDBA74; color: #000; }
+.shift-P4  { background-color: #86EFAC; color: #000; }
+.shift-S   { background-color: #60A5FA; color: #fff; }
+.shift-M   { background-color: #D946EF; color: #fff; font-weight: bold; }
+.shift-OFF { background-color: #9CA3AF; color: #fff; }
+.shift-C   { background-color: #22D3EE; color: #000; }
+.shift-    { background-color: #f8fafc; }
+
+/* Sel dengan request accepted */
+.cell-requested {
+    outline: 2px solid #f59e0b;
+    outline-offset: -2px;
+    position: relative;
+}
+.cell-inner {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px 2px;
+    gap: 2px;
+    min-height: 24px;
+    position: relative;
+}
+
+/* Badge bintang approved request */
+.req-badge {
+    position: absolute;
+    top: 1px;
+    right: 2px;
+    font-size: 7px;
+    color: #f59e0b;
+    line-height: 1;
+    pointer-events: none;
+    filter: drop-shadow(0 0 1px rgba(0,0,0,0.4));
+}
